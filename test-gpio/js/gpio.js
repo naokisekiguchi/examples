@@ -1,6 +1,6 @@
 'use strict';
 
-navigator.requestGPIOAccess = function() {
+navigator.requestGPIOAccess = function(port) {
   return new Promise(function(resolve, reject) {
     if (!navigator.mozGpio) {
       navigator.mozGpio = new Object();
@@ -18,32 +18,26 @@ navigator.requestGPIOAccess = function() {
         console.log('setDirection(' + portno + ',' + direction + ')');
       };
       navigator.mozGpio.getDirection = function() {
-        return 'out'
+        return 'out';
       };
     }
 
-    var gpioAccess = new GPIOAccess()
+    var gpioAccess = new GPIOAccess(port);
     resolve(gpioAccess);
   });
-}
+};
 
-function GPIOAccess() {
-  this.init();
+function GPIOAccess(port) {
+  this.init(port);
 }
 
 GPIOAccess.prototype = {
-  init: function() {
+  init: function(port) {
     this.ports = new Map();
-
-    navigator.mozGpio.export(198);
-    /* XXX: workaround */
-    var start = new Date();
-    while(new Date() - start < 1000);
-
-    navigator.mozGpio.export(199);
-
-    this.ports.set(198 - 0, new GPIOPort(198));
-    this.ports.set(199 - 0, new GPIOPort(199));
+    
+    navigator.mozGpio.export(port);
+    this.ports.set(port - 0, new GPIOPort(port));
+    
     console.log('size=' + this.ports.size);
   }
 };
@@ -56,6 +50,9 @@ GPIOPort.prototype = {
   init: function(portNumber) {
     this.portNumber = portNumber;
     this.direction = 'out';
+    this.interval = 30;
+    this.value = null;
+    this.timer = null;
   },
 
   setDirection: function(direction) {
@@ -63,6 +60,17 @@ GPIOPort.prototype = {
       if (direction === 'in' || direction === 'out') {
         this.direction = direction;
         navigator.mozGpio.setDirection(this.portNumber, direction === 'out');
+        if(direction === "in"){
+          console.log("in");
+          var self = this;
+          this.timer = setInterval(this.checkValue,this.interval,self);
+        }else{
+          console.log("out");
+          if(this.timer){
+            clearInterval(this.timer);            
+          }
+          console.log("time");
+        }
         resolve();
       } else {
         reject({'message':'invalid direction'});
@@ -93,5 +101,48 @@ GPIOPort.prototype = {
         resolve(value);
       }
     }.bind(this));
-  }
+  },
+  
+  checkValue:function(port){
+    port.read().then(
+      function(value){
+        if(port.value != null){
+          if(parseInt(value) != parseInt(port.value)){
+            if(typeof(port.onchange) === "function"){
+              port.onchange(value);  
+            }else{
+              console.log("port.onchange is not a function.");
+            }
+          }        
+        }
+        port.value = value;
+      },
+      function(){
+        console.log("check value error");
+      }
+    );
+  },
+  onchange:null
+};
+
+navigator.setGpioPort = function(portno,dist){
+  
+  return new Promise(function(resolve, reject){
+    navigator.requestGPIOAccess(portno).then(
+      function(gpioAccess){
+        console.log("gpioAccess" + portno);
+        var port = gpioAccess.ports.get(portno);
+        port.setDirection(dist).then(
+          function(){
+            console.log('export OK');
+            resolve(port);
+          },
+          function() {
+            console.log('export NG'); 
+            reject();
+          }
+        );
+      }
+    );
+  });
 };
